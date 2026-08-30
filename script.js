@@ -47,7 +47,10 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  /* Gallery lightbox */
+  /* =========================================================
+     Gallery lightbox
+     ========================================================= */
+
   const lightbox = document.getElementById("lightbox");
   const lightboxImage = document.getElementById("lightbox-image");
   const lightboxCaption = document.getElementById("lightbox-caption");
@@ -79,7 +82,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     lightbox.addEventListener("click", e => {
-      if (e.target === lightbox) close();
+      if (e.target === lightbox) {
+        close();
+      }
     });
 
     document.addEventListener("keydown", e => {
@@ -91,115 +96,164 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
-});
 
 
-/* =========================================================
-   YouTube Videos
-   Only ONE YouTube video can play at a time.
-   When another video is selected, the previous iframe is
-   completely destroyed and its thumbnail is restored.
-   ========================================================= */
+  /* =========================================================
+     YouTube videos
 
-var activeYouTubeFrame = null;
+     IMPORTANT:
+     Only ONE YouTube iframe is allowed to exist at a time.
+
+     When another thumbnail is clicked:
+       1. Stop every existing YouTube player.
+       2. Destroy every existing iframe.
+       3. Restore the thumbnails.
+       4. Create ONLY the newly selected player.
+
+     Event delegation is used so restored thumbnails work again.
+     ========================================================= */
+
+  function createYouTubeThumbnail(id, title) {
+    const button = document.createElement("button");
+
+    button.className = "youtube-thumb";
+    button.type = "button";
+
+    button.setAttribute("aria-label", title);
+    button.setAttribute("data-youtube-id", id);
+
+    const img = document.createElement("img");
+
+    img.src =
+      "https://i.ytimg.com/vi/" +
+      encodeURIComponent(id) +
+      "/hqdefault.jpg";
+
+    img.alt = title + " video thumbnail";
+
+    const play = document.createElement("span");
+
+    play.className = "youtube-play";
+    play.setAttribute("aria-hidden", "true");
+    play.textContent = "▶";
+
+    button.appendChild(img);
+    button.appendChild(play);
+
+    return button;
+  }
 
 
-function restoreYouTubeThumbnail(frame) {
-  if (!frame || !frame.parentNode) return;
+  function destroyAllYouTubePlayers() {
 
-  var id = frame.getAttribute("data-youtube-id");
-  var title =
-    frame.getAttribute("data-video-title") ||
-    frame.title ||
-    "Makkala Mane YouTube video";
+    const frames =
+      Array.from(
+        document.querySelectorAll(".youtube-player")
+      );
 
-  var button = document.createElement("button");
+    frames.forEach(frame => {
 
-  button.className = "youtube-thumb";
-  button.type = "button";
-  button.setAttribute("aria-label", title);
-  button.setAttribute("data-youtube-id", id);
+      const id =
+        frame.getAttribute("data-youtube-id");
 
-  button.innerHTML =
-    '<img src="https://i.ytimg.com/vi/' +
-    encodeURIComponent(id) +
-    '/hqdefault.jpg" alt="' +
-    title.replace(/"/g, "&quot;") +
-    ' video thumbnail">' +
-    '<span class="youtube-play" aria-hidden="true">▶</span>';
-
-  frame.replaceWith(button);
-
-  attachYouTubeButton(button);
-}
+      const title =
+        frame.getAttribute("data-video-title") ||
+        frame.title ||
+        "Makkala Mane YouTube video";
 
 
-function stopActiveYouTube() {
+      /*
+       * Ask YouTube to stop playback.
+       */
 
-  /*
-   * Destroy the currently active iframe completely.
-   * This is more reliable than sending pauseVideo commands
-   * because removing the iframe terminates the YouTube player.
-   */
+      try {
+        if (frame.contentWindow) {
+          frame.contentWindow.postMessage(
+            JSON.stringify({
+              event: "command",
+              func: "stopVideo",
+              args: []
+            }),
+            "*"
+          );
+        }
+      } catch (error) {
+        // Ignore messaging errors.
+      }
 
-  if (activeYouTubeFrame) {
 
-    var oldFrame = activeYouTubeFrame;
+      /*
+       * Immediately navigate the iframe away from YouTube.
+       * This terminates the old player.
+       */
 
-    activeYouTubeFrame = null;
+      try {
+        frame.src = "about:blank";
+      } catch (error) {
+        // Ignore iframe errors.
+      }
 
-    restoreYouTubeThumbnail(oldFrame);
+
+      /*
+       * Restore the thumbnail in the same location.
+       */
+
+      if (frame.parentNode) {
+
+        const thumbnail =
+          createYouTubeThumbnail(id, title);
+
+        frame.parentNode.replaceChild(
+          thumbnail,
+          frame
+        );
+      }
+
+    });
+
   }
 
 
   /*
-   * Safety cleanup:
-   * If any additional YouTube iframe exists for any reason,
-   * destroy it as well.
+   * Use ONE document-level click handler.
+   *
+   * This is important because thumbnails are recreated after
+   * stopping a video. A normal per-button event listener would
+   * not reliably work for those newly recreated buttons.
    */
 
-  document.querySelectorAll(".youtube-player").forEach(function(frame) {
+  document.addEventListener("click", function(event) {
 
-    frame.src = "about:blank";
+    const button =
+      event.target.closest(
+        ".youtube-thumb[data-youtube-id]"
+      );
 
-    if (frame.parentNode) {
-      restoreYouTubeThumbnail(frame);
+    if (!button) {
+      return;
     }
 
-  });
-}
 
+    const id =
+      button.getAttribute("data-youtube-id");
 
-function attachYouTubeButton(button) {
-
-  if (!button || button.dataset.youtubeBound === "true") {
-    return;
-  }
-
-  button.dataset.youtubeBound = "true";
-
-
-  button.addEventListener("click", function() {
-
-    var id = button.getAttribute("data-youtube-id");
-
-    var title =
+    const title =
       button.getAttribute("aria-label") ||
       "Makkala Mane YouTube video";
 
 
     /*
-     * IMPORTANT:
-     * Stop the previous video BEFORE creating the new iframe.
+     * ALWAYS destroy ALL existing players first.
      */
 
-    stopActiveYouTube();
+    destroyAllYouTubePlayers();
 
 
     /*
-     * Local file preview:
-     * YouTube may block embedded playback when the page is
-     * opened directly using file://.
+     * Local file preview.
+     *
+     * YouTube may block embedded playback when opened
+     * directly using file://.
      */
 
     if (window.location.protocol === "file:") {
@@ -216,14 +270,18 @@ function attachYouTubeButton(button) {
 
 
     /*
-     * Create the new YouTube iframe.
+     * Create the new player.
      */
 
-    var frame = document.createElement("iframe");
+    const frame =
+      document.createElement("iframe");
 
     frame.className = "youtube-player";
 
-    frame.setAttribute("data-youtube-id", id);
+    frame.setAttribute(
+      "data-youtube-id",
+      id
+    );
 
     frame.setAttribute(
       "data-video-title",
@@ -233,7 +291,7 @@ function attachYouTubeButton(button) {
     frame.src =
       "https://www.youtube-nocookie.com/embed/" +
       encodeURIComponent(id) +
-      "?autoplay=1&rel=0";
+      "?autoplay=1&rel=0&enablejsapi=1";
 
     frame.title = title;
 
@@ -249,116 +307,100 @@ function attachYouTubeButton(button) {
 
 
     /*
-     * Remember this as the only active player.
-     */
-
-    activeYouTubeFrame = frame;
-
-
-    /*
-     * Replace thumbnail with the playing iframe.
+     * Replace the clicked thumbnail with the new player.
      */
 
     button.replaceWith(frame);
 
   });
-}
 
 
-/*
- * Attach the video click handler to all thumbnails
- * currently present on the page.
- */
+  /* =========================================================
+     Team photographs
+     Open original image at large size.
+     ========================================================= */
 
-document
-  .querySelectorAll(".youtube-thumb[data-youtube-id]")
-  .forEach(attachYouTubeButton);
-
-
-
-/* =========================================================
-   Team photographs
-   Open the original supplied image at large size.
-   ========================================================= */
-
-document.addEventListener("DOMContentLoaded", function() {
-
-  var box =
+  const teamBox =
     document.getElementById("teamPhotoLightbox");
 
-  var image =
+  const teamImage =
     document.getElementById("teamPhotoLightboxImage");
 
-  var closeBtn =
+  const teamClose =
     document.getElementById("teamPhotoClose");
 
-  if (!box || !image) return;
+  if (teamBox && teamImage) {
 
+    const photos =
+      document.querySelectorAll(
+        ".principal-body img, .staff-body img"
+      );
 
-  var photos =
-    document.querySelectorAll(
-      ".principal-body img, .staff-body img"
-    );
+    function closeTeamPhoto() {
 
+      teamBox.classList.remove("open");
 
-  function close() {
+      document.body.classList.remove("no-scroll");
 
-    box.classList.remove("open");
+      teamImage.src = "";
 
-    document.body.classList.remove("no-scroll");
+    }
 
-    image.src = "";
+    photos.forEach(photo => {
 
-  }
+      photo.addEventListener("click", function() {
 
+        teamImage.src =
+          photo.currentSrc ||
+          photo.src;
 
-  photos.forEach(function(photo) {
+        teamImage.alt =
+          photo.alt || "";
 
-    photo.addEventListener("click", function() {
+        teamBox.classList.add("open");
 
-      image.src =
-        photo.currentSrc ||
-        photo.src;
+        document.body.classList.add("no-scroll");
 
-      image.alt =
-        photo.alt || "";
+        if (teamClose) {
+          teamClose.focus();
+        }
 
-      box.classList.add("open");
-
-      document.body.classList.add("no-scroll");
-
-      if (closeBtn) {
-        closeBtn.focus();
-      }
+      });
 
     });
 
-  });
+    if (teamClose) {
+      teamClose.addEventListener(
+        "click",
+        closeTeamPhoto
+      );
+    }
 
+    teamBox.addEventListener(
+      "click",
+      function(event) {
 
-  if (closeBtn) {
-    closeBtn.addEventListener("click", close);
+        if (event.target === teamBox) {
+          closeTeamPhoto();
+        }
+
+      }
+    );
+
+    document.addEventListener(
+      "keydown",
+      function(event) {
+
+        if (
+          event.key === "Escape" &&
+          teamBox.classList.contains("open")
+        ) {
+          closeTeamPhoto();
+        }
+
+      }
+    );
+
   }
-
-
-  box.addEventListener("click", function(e) {
-
-    if (e.target === box) {
-      close();
-    }
-
-  });
-
-
-  document.addEventListener("keydown", function(e) {
-
-    if (
-      e.key === "Escape" &&
-      box.classList.contains("open")
-    ) {
-      close();
-    }
-
-  });
 
 });
